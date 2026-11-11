@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cliente - Protocolo cliente-servidor</title>
+<style>
+:root { color-scheme: white; font-family: system-ui, sans-serif; }
+body { max-width: 640px; margin: 0 auto; padding: 16px; }
+fieldset { margin: 12px 0; border: 1px solid #8886; border-radius: 8px; }
+label { display: block; margin: 8px 0 2px; font-size: .9rem; }
+input { width: 100%; box-sizing: border-box; padding: 6px; }
+button { margin: 10px 6px 0 0; padding: 8px 12px; cursor: pointer; }
+.row { display: flex; gap: 8px; }
+.row > div { flex: 1; }
+#msg { display: none; padding: 10px; border-radius: 6px; margin: 12px 0; white-space: pre-wrap; }
+.ok { background: #2a7a3b44; }
+.err { background: #c0392b44; }
+pre { background: #8883; padding: 8px; border-radius: 6px; overflow-x: auto; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<h1>Cliente</h1>
+
+<fieldset>
+  <legend>Servidor</legend>
+  <div class="row">
+    <div><label for="ip">IP</label><input id="ip" value="127.0.0.1"></div>
+    <div><label for="porta">Porta</label><input id="porta" value="8000" inputmode="numeric"></div>
+  </div>
+</fieldset>
+
+<div id="msg"></div>
+
+<div id="telaAuth">
+  <fieldset>
+    <legend>Cadastro</legend>
+    <label for="cNome">Nome</label><input id="cNome">
+    <label for="cEmail">E-mail</label><input id="cEmail" type="email">
+    <label for="cSenha">Senha</label><input id="cSenha" type="password">
+    <button onclick="cadastrar()">Cadastrar</button>
+  </fieldset>
+  <fieldset>
+    <legend>Login</legend>
+    <label for="lEmail">E-mail</label><input id="lEmail" type="email">
+    <label for="lSenha">Senha</label><input id="lSenha" type="password">
+    <button onclick="login()">Entrar</button>
+  </fieldset>
+</div>
+
+<div id="telaUsuario" hidden>
+  <p id="quem"></p>
+  <fieldset>
+    <legend>Meus dados</legend>
+    <button onclick="buscar()">Buscar meus dados</button>
+    <pre id="dados">(nenhum dado carregado)</pre>
+  </fieldset>
+  <fieldset>
+    <legend>Atualizar dados</legend>
+    <label for="uNome">Nome</label><input id="uNome">
+    <label for="uEmail">E-mail</label><input id="uEmail" type="email">
+    <label for="uSenha">Senha (obrigatória no PUT; opcional no PATCH)</label><input id="uSenha" type="password">
+    <button onclick="atualizar(false)">Atualizar tudo (PUT)</button>
+    <button onclick="atualizar(true)">Atualizar parcial (PATCH)</button>
+  </fieldset>
+  <fieldset>
+    <legend>Conta e sessão</legend>
+    <button onclick="apagar()">Apagar minha conta</button>
+    <button onclick="logout()">Logout</button>
+  </fieldset>
+  <fieldset>
+    <legend>Produtos (consulta de estoque)</legend>
+    <label for="pId">Id do produto</label><input id="pId" inputmode="numeric">
+    <button onclick="consultarProduto()">Consultar produto</button>
+    <button onclick="listarProdutos()">Listar produtos</button>
+    <pre id="produtos">(nenhum produto carregado)</pre>
+  </fieldset>
+  <div id="admin" hidden>
+    <fieldset>
+      <legend>ADM - Produtos</legend>
+      <label for="prodId">Id do produto (para carregar, atualizar ou remover)</label>
+      <input id="prodId" inputmode="numeric">
+      <label for="prodNome">Nome</label><input id="prodNome">
+      <label for="prodDesc">Descrição (pode ficar vazia)</label><input id="prodDesc">
+      <label for="prodQtd">Quantidade</label><input id="prodQtd" inputmode="numeric">
+      <button onclick="cadastrarProduto()">Cadastrar novo (POST)</button>
+      <button onclick="listarProdutos()">Listar produtos</button>
+      <button onclick="carregarProduto()">Carregar produto no formulário</button>
+      <button onclick="atualizarProduto(false)">Atualizar tudo (PUT)</button>
+      <button onclick="atualizarProduto(true)">Atualizar parcial (PATCH)</button>
+      <button onclick="removerProduto()">Remover produto</button>
+      <pre id="produtosAdm">(lista não carregada)</pre>
+    </fieldset>
+    <fieldset>
+      <legend>ADM - Usuários</legend>
+      <button onclick="listarUsuarios()">Listar todos os usuários</button>
+      <pre id="listaUsuarios">(lista não carregada)</pre>
+      <label for="alvoId">Id do usuário alvo</label>
+      <input id="alvoId" inputmode="numeric">
+      <label for="aNome">Nome</label><input id="aNome">
+      <label for="aEmail">E-mail</label><input id="aEmail" type="email">
+      <label for="aSenha">Senha (obrigatória no PUT; opcional no PATCH)</label><input id="aSenha" type="password">
+      <button onclick="carregarAlvo()">Carregar usuário no formulário</button>
+      <button onclick="atualizarAlvo(false)">Atualizar tudo (PUT)</button>
+      <button onclick="atualizarAlvo(true)">Atualizar parcial (PATCH)</button>
+      <button onclick="apagarAlvo()">Apagar usuário</button>
+    </fieldset>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let sessao = null; // { id, token, usuario } - ids tratados como texto opaco
+
+function base() {
+  const ip = $('ip').value.trim(), porta = $('porta').value.trim();
+  if (!ip || !porta) throw new Error('Informe o IP e a porta do servidor.');
+  return `http://${ip}:${porta}/api/v1`;
+}
+
+function aviso(texto, ok) {
+  const m = $('msg');
+  m.textContent = texto;
+  m.className = ok ? 'ok' : 'err';
+  m.style.display = 'block';
+}
+
+function tela() {
+  $('telaAuth').hidden = !!sessao;
+  $('telaUsuario').hidden = !sessao;
+  $('admin').hidden = !(sessao && sessao.usuario.admin);
+  if (!sessao) $('alvoId').value = '';
+  if (sessao) $('quem').textContent = `Logado como ${sessao.usuario.nome} (${sessao.usuario.email})${sessao.usuario.admin ? ' - ADM' : ''}`;
+}
+
+function preencher(u) {
+  $('uNome').value = u.nome;
+  $('uEmail').value = u.email;
+  $('uSenha').value = '';
+  $('dados').textContent = JSON.stringify(u, null, 2);
+}
+
+async function api(metodo, caminho, corpo, auth) {
+  const headers = {};
+  if (corpo !== undefined) headers['Content-Type'] = 'application/json';
+  if (auth && sessao) headers['Authorization'] = 'Bearer ' + sessao.token;
+  const url = base() + caminho;
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: metodo, headers,
+      body: corpo !== undefined ? JSON.stringify(corpo) : undefined,
+    });
+  } catch (e) {
+    throw new Error('Não foi possível conectar ao servidor. Confira IP, porta e se ele está ligado.');
+  }
+  const texto = await resp.text();
+  let dados = null;
+  try { dados = texto ? JSON.parse(texto) : null; } catch (e) { /* resposta fora do formato */ }
+  if (!resp.ok) {
+    if (resp.status === 401 && auth) { sessao = null; tela(); } // encerra sessão local
+    const padrao = {
+      400: 'Requisição inválida.', 401: 'Não autorizado.', 403: 'Acesso negado.',
+      404: 'Não encontrado.', 405: 'Método não permitido.', 409: 'Conflito (e-mail já cadastrado).',
+      500: 'Erro interno do servidor.',
+    };
+    const m = dados && typeof dados.mensagem === 'string' ? dados.mensagem : (padrao[resp.status] || 'Erro inesperado.');
+    throw new Error(`${resp.status} - ${m}`);
+  }
+  return dados;
+}
+
+async function acao(fn) {
+  try { await fn(); } catch (e) { aviso(e.message, false); }
+}
+
+const meuId = () => String(sessao.usuario.id);
+const urlUsuario = id => `/users/${encodeURIComponent(id)}`;
+
+function corpoUsuario(p, parcial) { // p = 'u' (meus dados) ou 'a' (usuário alvo do ADM)
+  const campos = { nome: $(p + 'Nome').value, email: $(p + 'Email').value, senha: $(p + 'Senha').value };
+  if (parcial) { // PATCH: só envia o que foi preenchido
+    const c = {};
+    for (const k in campos) if (campos[k] !== '') c[k] = campos[k];
+    return c;
+  }
+  if (!campos.nome || !campos.email || !campos.senha)
+    throw new Error('O PUT exige nome, e-mail e senha preenchidos. Para mudar só alguns campos (ou manter a senha), use "Atualizar parcial (PATCH)".');
+  return campos;
+}
+
+const cadastrar = () => acao(async () => {
+  try {
+    const u = await api('POST', '/users',
+      { nome: $('cNome').value, email: $('cEmail').value, senha: $('cSenha').value }, false);
+    aviso(`Usuário cadastrado (id ${u.id}). Agora faça login.`, true);
+  } catch (e) {
+    if (e.message.startsWith('409')) throw new Error(e.message + '\nEste e-mail já está cadastrado. Faça login em vez de se cadastrar novamente.');
+    throw e;
+  }
+});
+
+const login = () => acao(async () => {
+  sessao = await api('POST', '/sessions', { email: $('lEmail').value, senha: $('lSenha').value }, false);
+  tela();
+  preencher(sessao.usuario);
+  aviso('Login realizado com sucesso.', true);
+});
+
+const buscar = () => acao(async () => {
+  const u = await api('GET', urlUsuario(meuId()), undefined, true);
+  sessao.usuario = u;
+  tela();
+  preencher(u);
+  aviso('Dados carregados.', true);
+});
+
+const atualizar = parcial => acao(async () => {
+  const corpo = corpoUsuario('u', parcial);
+  const u = await api(parcial ? 'PATCH' : 'PUT', urlUsuario(meuId()), corpo, true);
+  sessao.usuario = u;
+  tela();
+  preencher(u);
+  aviso('Dados atualizados.', true);
+});
+
+const apagar = () => acao(async () => {
+  if (!confirm('Apagar sua conta definitivamente?')) return;
+  await api('DELETE', urlUsuario(meuId()), undefined, true);
+  sessao = null;
+  tela();
+  aviso('Conta apagada.', true);
+});
+
+const logout = () => acao(async () => {
+  await api('DELETE', `/sessions/${encodeURIComponent(sessao.id)}`, undefined, true);
+  sessao = null;
+  tela();
+  aviso('Logout realizado.', true);
+});
+const mostrarProdutos = d => {
+  const t = JSON.stringify(d, null, 2);
+  $('produtos').textContent = t;
+  $('produtosAdm').textContent = t;
+};
+const idProduto = () => {
+  const id = $('pId').value.trim();
+  if (!id) throw new Error('Informe o id do produto.');
+  return encodeURIComponent(id);
+};
+const idProdutoAdm = () => {
+  const id = $('prodId').value.trim();
+  if (!id) throw new Error('Informe o id do produto no painel ADM - Produtos.');
+  return encodeURIComponent(id);
+};
+const recarregarProdutos = async () => mostrarProdutos(await api('GET', '/products', undefined, true));
+
+const consultarProduto = () => acao(async () => {
+  mostrarProdutos(await api('GET', `/products/${idProduto()}`, undefined, true));
+  aviso('Produto carregado.', true);
+});
+
+const listarProdutos = () => acao(async () => {
+  await recarregarProdutos();
+  aviso('Lista de produtos carregada.', true);
+});
+
+function corpoProduto(parcial) {
+  const c = { nome: $('prodNome').value, descricao: $('prodDesc').value };
+  if ($('prodQtd').value !== '') c.quantidade = Number($('prodQtd').value);
+  if (parcial) {
+    for (const k of ['nome', 'descricao']) if (c[k] === '') delete c[k];
+  } else if (!c.nome || c.quantidade === undefined) {
+    throw new Error('Preencha nome e quantidade (a descrição pode ficar vazia). Para mudar só alguns campos, use "Atualizar parcial (PATCH)".');
+  }
+  return c;
+}
+
+const cadastrarProduto = () => acao(async () => {
+  const p = await api('POST', '/products', corpoProduto(false), true);
+  $('prodId').value = p.id;
+  await recarregarProdutos();
+  aviso(`Produto cadastrado (id ${p.id}).`, true);
+});
+
+const carregarProduto = () => acao(async () => {
+  const p = await api('GET', `/products/${idProdutoAdm()}`, undefined, true);
+  $('prodNome').value = p.nome;
+  $('prodDesc').value = p.descricao;
+  $('prodQtd').value = p.quantidade;
+  aviso(`Produto ${p.id} carregado no formulário.`, true);
+});
+
+const atualizarProduto = parcial => acao(async () => {
+  const id = idProdutoAdm();
+  const p = await api(parcial ? 'PATCH' : 'PUT', `/products/${id}`, corpoProduto(parcial), true);
+  await recarregarProdutos();
+  aviso(`Produto ${p.id} atualizado.`, true);
+});
+
+const removerProduto = () => acao(async () => {
+  const id = idProdutoAdm();
+  if (!confirm('Remover o produto definitivamente?')) return;
+  await api('DELETE', `/products/${id}`, undefined, true);
+  ['prodId', 'prodNome', 'prodDesc', 'prodQtd'].forEach(x => { $(x).value = ''; });
+  await recarregarProdutos();
+  aviso('Produto removido.', true);
+});
+
+// ---- ADM: usuários ----
+const idAlvo = () => {
+  const id = $('alvoId').value.trim();
+  if (!id) throw new Error('Informe o id do usuário alvo.');
+  return id;
+};
+const recarregarUsuarios = async () => {
+  $('listaUsuarios').textContent = JSON.stringify(await api('GET', '/users', undefined, true), null, 2);
+};
+
+const listarUsuarios = () => acao(async () => {
+  await recarregarUsuarios();
+  aviso('Lista de usuários carregada.', true);
+});
+
+const carregarAlvo = () => acao(async () => {
+  const u = await api('GET', urlUsuario(idAlvo()), undefined, true);
+  $('aNome').value = u.nome;
+  $('aEmail').value = u.email;
+  $('aSenha').value = '';
+  aviso(`Usuário ${u.id} carregado no formulário.`, true);
+});
+
+const atualizarAlvo = parcial => acao(async () => {
+  const id = idAlvo();
+  const corpo = corpoUsuario('a', parcial);
+  const u = await api(parcial ? 'PATCH' : 'PUT', urlUsuario(id), corpo, true);
+  if (Number(id) === Number(meuId())) { sessao.usuario = u; tela(); preencher(u); }
+  $('aSenha').value = '';
+  await recarregarUsuarios();
+  aviso(`Usuário ${u.id} atualizado.`, true);
+});
+
+const apagarAlvo = () => acao(async () => {
+  const id = idAlvo();
+  if (!confirm(`Apagar o usuário ${id} definitivamente?`)) return;
+  await api('DELETE', urlUsuario(id), undefined, true);
+  if (Number(id) === Number(meuId())) { sessao = null; tela(); aviso('Sua conta foi apagada.', true); return; }
+  ['aNome', 'aEmail', 'aSenha'].forEach(x => { $(x).value = ''; });
+  await recarregarUsuarios();
+  aviso(`Usuário ${id} apagado.`, true);
+});
+</script>
+</body>
+</html>
